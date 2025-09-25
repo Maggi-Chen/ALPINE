@@ -1,0 +1,570 @@
+import pysam
+
+
+# input a read line, return lists of sv
+def cigardeletion(flag, chrom, position, cigar, min_size, max_size):
+    """
+    given sequence alignment file to detect various types of structural variations such as deletions, inservation, Unmodified-with-SNP based on cigar string
+
+    Para
+            -position: alignment start position on the reference.
+            -min and max_size: size threhold for identifying SVs.
+    """
+
+    flag = int(flag)
+    if flag <= 16:  # needed?
+        detect_cigar_sv = True
+    else:
+        detect_cigar_sv = True
+    pos = int(position)
+    numbers = '1234567890'
+    num = ''  # store numeric string from cigar
+    reflen = 0  # reference length
+    readlen = 0  # read length
+    leftclip = 0  # soft and hard clipping from begin of alignment
+    rightclip = 0
+    snps = []
+    deletions = []
+    insertions = []
+    for c in cigar:  # iterate each character in the cigar string
+        if c in numbers:  # if character is a number
+            num += c
+            continue
+        if c in 'MNP=':  # lengths of read and reference
+            readlen += int(num)
+            reflen += int(num)
+            num = ''
+            continue  # correspond read and reference lengths based on the value in `num`
+        if c == 'X':  # mismatch
+            # if previous record 'num' falls within the size range
+            if min_size <= int(num) <= max_size:
+                # add infor to the 'snp' list
+                snps += [[chrom, pos+reflen, int(num), 'Unmodified-with-SNP']]
+            readlen += int(num)
+            reflen += int(num)
+            num = ''
+            continue  # 'num' out of the size range
+        if c == 'I':  # insertion
+            # if insert size falls within the size range
+            if detect_cigar_sv and int(num) >= min_size and int(num) <= max_size:
+                # add info to the inseration list
+                insertions += [[chrom, pos+reflen,
+                                int(num), 'I-cigar', readlen+leftclip]]
+            readlen += int(num)
+            num = ''
+            continue
+        if c == 'D':  # deletion
+            if detect_cigar_sv and int(num) >= min_size and int(num) <= max_size:
+                deletions += [[chrom, pos+reflen, int(num), 'D-cigar']]
+            reflen += int(num)
+            num = ''
+            continue
+        if c in 'SH':  # leftclip or right clip
+            if readlen == 0:
+                leftclip = int(num)
+            else:
+                rightclip = int(num)
+            num = ''; continue
+
+    # combine 'dele', 'insert' and 'snp' to create the list about detected SV
+    svcallset = deletions+insertions+snps
+    # [[chrom, start_pos, size_deletion, 'D-cigar'],
+    # 	[chrom, start_pos, size_insert, 'I-cigar', readlen+leftclip],
+    # 		[chrom, start_pos, size_snp, 'Unmodified-with-SNP']]
+
+    # return list of strctural variants
+    return [svcallset, reflen, [leftclip, readlen, rightclip]]
+
+# function not been excuted in classify_read.py?
+def simplifycigar(cigar):
+    numbers = '1234567890'
+    num = ''
+    readlen = 0
+    leftclip = 0
+    rightclip = 0
+    for c in cigar:
+        if c in numbers:
+            num += c
+            continue
+        if c in 'MNP=XI':
+            readlen += int(num)
+            num = ''
+            continue
+        if c == 'D':
+            num = ''
+            continue
+        if c in 'SH':
+            if readlen == 0:
+                leftclip = int(num)
+                num = ''
+            else:
+                rightclip = int(num)
+                num = ''
+
+    return [leftclip, readlen, rightclip]
+
+# input a list of segments,return list of deletions
+def segmentdeletion(segments, min_size, max_size):
+    if len([c for c in segments if int(c[1]) <= 16]) == 0:
+        return []
+    if len(segments) <= 1:
+        return []
+    svcallset = []
+    primary = [c for c in segments if int(c[1]) <= 16][0]
+    segments = [c for c in segments if c != primary]
+    readseq = primary[7]
+    chrom = primary[2]
+    priflag = (int(primary[1]) % 32) > 15
+    samedirchr = []
+    samechr = []
+    diffchr = []
+    rawsegsvid = 1
+    for c in segments:
+        ch = c[2]
+        f = int(c[1]) % 32 > 15
+        if c[5][1] < 300:
+            continue
+        if ch != chrom:
+            diffchr += [c]
+        elif f != priflag:
+            samechr += [c]
+        else:
+            samedirchr += [c]
+    for c in samedirchr:
+        if c[3] > primary[3]:
+            leftread = primary
+            rightread = c
+        elif c[3] < primary[3]:
+            leftread = c
+            rightread = primary
+        else:
+            continue
+        leftinfo = leftread[5]
+        rightinfo = rightread[5]
+        # insertion:
+        if abs(rightread[3]-leftread[4]) <= 300:
+            overlap = rightread[3]-leftread[4]
+            ins_size = rightinfo[0]-leftinfo[1]-leftinfo[0]-overlap
+            if min_size <= ins_size <= max_size:
+                svcallset += [chrom+'\t'+str(min(rightread[3], leftread[4]))+'\t'+str(ins_size)+'\t'+'I-segment'+'\t'+primary[0]+'_seg'+str(rawsegsvid)+'\t'+str(
+                    int(c[1])+int(primary[1]))+'\t'+str((int(c[6])+int(primary[6]))//2)+'\t'+readseq[leftinfo[0]+leftinfo[1]:rightinfo[0]-overlap]]
+                rawsegsvid += 1
+
+        # deletion:
+        overlapmap = leftinfo[0]+leftinfo[1]-rightinfo[0]
+        window_max = 1500
+        if -200 < overlapmap < window_max:
+            del_size = rightread[3]-leftread[4]+overlapmap
+            if min_size <= del_size <= max_size:
+                svcallset += [chrom+'\t'+str(max(0, leftread[4]-max(0, overlapmap)))+'\t'+str(del_size)+'\t'+'D-segment' +
+                              '\t'+primary[0]+'_seg'+str(rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                rawsegsvid += 1
+
+        # duplication:
+        overlapmap = leftinfo[0]+leftinfo[1]-rightinfo[0]
+        window_max = 500
+        if -200 < overlapmap < window_max and leftread[4]-rightread[3] >= max(50, overlapmap):
+            dup_size = leftread[4]-rightread[3]-max(overlapmap, 0)
+            if min_size <= dup_size <= max_size:
+                svcallset += [chrom+'\t'+str(rightread[3])+'\t'+str(dup_size)+'\t'+'DUP-segment'+'\t'+primary[0]+'_seg'+str(
+                    rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                rawsegsvid += 1
+        overlapmap = rightinfo[0]+rightinfo[1]-leftinfo[0]
+        if -200 < overlapmap < window_max and (rightread[4]-leftread[3]) >= max(1000, overlapmap):
+            dup_size = rightread[4]-leftread[3]-overlapmap
+            if min_size <= dup_size <= max_size:
+                svcallset += [chrom+'\t'+str(leftread[3])+'\t'+str(dup_size)+'\t'+'DUP-segment'+'\t'+primary[0]+'_seg'+str(
+                    rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                rawsegsvid += 1
+    # inversion:
+    for c in samechr:
+        if c[3] > primary[3] and c[4]-primary[4] > -200:
+            leftread = primary
+            rightread = c
+        elif c[3] < primary[3] and primary[4]-c[4] > -200:
+            leftread = c
+            rightread = primary
+        else:
+            continue
+        leftinfo = leftread[5]
+        rightinfo = rightread[5]
+        window_max = 500
+        overlapmap = rightinfo[0]+rightinfo[1]-leftinfo[2]
+        if -200 < overlapmap < window_max and (rightread[4]-leftread[4]) >= max(100, overlapmap):
+            inv_size = rightread[4]-leftread[4]-overlapmap
+            if min_size <= inv_size <= max_size:
+                svcallset += [chrom+'\t'+str(leftread[4])+'\t'+str(inv_size)+'\t'+'INV-segment'+'\t'+primary[0]+'_seg'+str(
+                    rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                rawsegsvid += 1
+                continue
+        overlapmap = rightinfo[1]+rightinfo[2]-leftinfo[0]
+        if -200 < overlapmap < window_max and (rightread[3]-leftread[3]) >= max(100, overlapmap):
+            inv_size = rightread[3]-leftread[3]-overlapmap
+            if min_size <= inv_size <= max_size:
+                svcallset += [chrom+'\t'+str(leftread[3])+'\t'+str(inv_size)+'\t'+'INV-segment'+'\t'+primary[0]+'_seg'+str(
+                    rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                rawsegsvid += 1
+                continue
+    # translocation:
+    for c in diffchr:
+        pinfo = primary[5]
+        cinfo = c[5]
+        window_max = 200
+        bp1 = ''
+        bp2 = ''
+        if abs(pinfo[0]-cinfo[0]-cinfo[1]) <= window_max or abs(pinfo[0]-cinfo[1]-cinfo[2]) <= window_max:
+            chrom1 = primary[2]
+            bp1 = primary[3]
+        elif abs(pinfo[2]-cinfo[0]-cinfo[1]) <= window_max or abs(pinfo[2]-cinfo[1]-cinfo[2]) <= window_max:
+            chrom1 = primary[2]
+            bp1 = primary[4]
+        if abs(cinfo[0]-pinfo[0]-pinfo[1]) <= window_max or abs(cinfo[0]-pinfo[1]-pinfo[2]) <= window_max:
+            chrom2 = c[2]
+            bp2 = c[3]
+        elif abs(cinfo[2]-pinfo[0]-pinfo[1]) <= window_max or abs(cinfo[2]-pinfo[1]-pinfo[2]) <= window_max:
+            chrom2 = c[2]
+            bp2 = c[4]
+        if bp1 != '' and bp2 != '':
+            if chrom1 > chrom2:
+                svcallset += [chrom2+'\t'+str(bp2)+'\t'+chrom1+'\t'+str(bp1)+'\tTRA-segment\t'+primary[0]+'_seg'+str(
+                    rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                rawsegsvid += 1
+            if chrom1 < chrom2:
+                svcallset += [chrom1+'\t'+str(bp1)+'\t'+chrom2+'\t'+str(bp2)+'\tTRA-segment\t'+primary[0]+'_seg'+str(
+                    rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                rawsegsvid += 1
+
+    return svcallset
+
+# input a list of segments,return list of deletions
+def segmentdeletion_tumor(segments, min_size, max_size):
+    """
+    Take a list of read segments and detect various types of SV
+    (deletions, duplications, inversions, translocations) based on size criteria and segment information
+    input
+            segments: list of read query names
+            min_size: minimum size threshold for detecting SVs
+            max_size: maximum size threshold for detecting SVs
+    output
+            a list of detected SV events
+
+    """
+
+    svcallset = []  # intialize an empty list svcallset
+
+    for i in range(len(segments)-1):
+        primary = segments[i]
+        others = segments[i+1:]
+
+        #segmentreads: {read_query_name: [qname, flag, chrom, pos_start, pos_end, [leftclip, readlength, rightclip ], MAPQ, '']}
+        chrom = primary[2]
+        priflag = (int(primary[1]) % 32) > 15
+        samedirchr = []
+        samechr = []
+        diffchr = []
+        rawsegsvid = 1
+        for c in others:
+            ch = c[2]
+            f = int(c[1]) % 32 > 15
+            if c[5][1] < 300:
+                continue
+            if ch != chrom:
+                diffchr += [c]
+            elif f != priflag:
+                samechr += [c]
+            else:
+                samedirchr += [c]
+
+        for c in samedirchr:
+            if c[3] > primary[3]:
+                leftread = primary
+                rightread = c
+            elif c[3] < primary[3]:
+                leftread = c
+                rightread = primary
+            else:
+                continue
+            leftinfo = leftread[5]
+            rightinfo = rightread[5]
+        # insertion:
+            if abs(rightread[3]-leftread[4]) <= 300:
+                overlap = rightread[3]-leftread[4]
+                ins_size = rightinfo[0]-leftinfo[1]-leftinfo[0]-overlap
+                if min_size <= ins_size <= max_size:
+                    svcallset += [chrom+'\t'+str(min(rightread[3], leftread[4]))+'\t'+str(ins_size)+'\t'+'I-segment'+'\t'+primary[0]+'_seg'+str(
+                        rawsegsvid)+'\t'+str(int(c[1])+int(primary[1]))+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+
+        # deletion:
+            overlapmap = leftinfo[0]+leftinfo[1]-rightinfo[0]
+            window_max = 1500
+            if -200 < overlapmap < window_max:
+                del_size = rightread[3]-leftread[4]+overlapmap
+                if min_size <= del_size <= max_size:
+                    svcallset += [chrom+'\t'+str(leftread[4]-max(0, overlapmap))+'\t'+str(del_size)+'\t'+'D-segment' +
+                                  '\t'+primary[0]+'_seg'+str(rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+
+        # duplication:
+            overlapmap = leftinfo[0]+leftinfo[1]-rightinfo[0]
+            window_max = 500
+            if -200 < overlapmap < window_max and leftread[4]-rightread[3] >= max(50, overlapmap):
+                dup_size = leftread[4]-rightread[3]-max(overlapmap, 0)
+                if min_size <= dup_size <= max_size:
+                    svcallset += [chrom+'\t'+str(rightread[3])+'\t'+str(dup_size)+'\t'+'DUP-segment'+'\t'+primary[0]+'_seg'+str(
+                        rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+            overlapmap = rightinfo[0]+rightinfo[1]-leftinfo[0]
+            if -200 < overlapmap < window_max and (rightread[4]-leftread[3]) >= max(1000, overlapmap):
+                dup_size = rightread[4]-leftread[3]-overlapmap
+                if min_size <= dup_size <= max_size:
+                    svcallset += [chrom+'\t'+str(leftread[3])+'\t'+str(dup_size)+'\t'+'DUP-segment'+'\t'+primary[0]+'_seg'+str(
+                        rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+    # inversion:
+        for c in samechr:
+            if c[3] > primary[3] and c[4]-primary[4] > -200:
+                leftread = primary
+                rightread = c
+            elif c[3] < primary[3] and primary[4]-c[4] > -200:
+                leftread = c
+                rightread = primary
+            else:
+                continue
+            leftinfo = leftread[5]
+            rightinfo = rightread[5]
+            window_max = 500
+            overlapmap = rightinfo[0]+rightinfo[1]-leftinfo[2]
+            if -200 < overlapmap < window_max and (rightread[4]-leftread[4]) >= max(100, overlapmap):
+                inv_size = rightread[4]-leftread[4]-overlapmap
+                if min_size <= inv_size <= max_size:
+                    svcallset += [chrom+'\t'+str(leftread[4])+'\t'+str(inv_size)+'\t'+'INV-segment'+'\t'+primary[0]+'_seg'+str(
+                        rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+                    continue
+            overlapmap = rightinfo[1]+rightinfo[2]-leftinfo[0]
+            if -200 < overlapmap < window_max and (rightread[3]-leftread[3]) >= max(100, overlapmap):
+                inv_size = rightread[3]-leftread[3]-overlapmap
+                if min_size <= inv_size <= max_size:
+                    svcallset += [chrom+'\t'+str(leftread[3])+'\t'+str(inv_size)+'\t'+'INV-segment'+'\t'+primary[0]+'_seg'+str(
+                        rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+                    continue
+    # translocation:
+        for c in diffchr:
+            pinfo = primary[5]
+            cinfo = c[5]
+            window_max = 200
+            bp1 = ''
+            bp2 = ''
+            if abs(pinfo[0]-cinfo[0]-cinfo[1]) <= window_max or abs(pinfo[0]-cinfo[1]-cinfo[2]) <= window_max:
+                chrom1 = primary[2]
+                bp1 = primary[3]
+            elif abs(pinfo[2]-cinfo[0]-cinfo[1]) <= window_max or abs(pinfo[2]-cinfo[1]-cinfo[2]) <= window_max:
+                chrom1 = primary[2]
+                bp1 = primary[4]
+            if abs(cinfo[0]-pinfo[0]-pinfo[1]) <= window_max or abs(cinfo[0]-pinfo[1]-pinfo[2]) <= window_max:
+                chrom2 = c[2]
+                bp2 = c[3]
+            elif abs(cinfo[2]-pinfo[0]-pinfo[1]) <= window_max or abs(cinfo[2]-pinfo[1]-pinfo[2]) <= window_max:
+                chrom2 = c[2]
+                bp2 = c[4]
+            if bp1 != '' and bp2 != '':
+                if chrom1 > chrom2:
+                    svcallset += [chrom2+'\t'+str(bp2)+'\t'+chrom1+'\t'+str(bp1)+'\tTRA-segment\t'+primary[0]+'_seg'+str(
+                        rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+                if chrom1 < chrom2:
+                    svcallset += [chrom1+'\t'+str(bp1)+'\t'+chrom2+'\t'+str(bp2)+'\tTRA-segment\t'+primary[0]+'_seg'+str(
+                        rawsegsvid)+'\t'+str(c[1])+'\t'+str((int(c[6])+int(primary[6]))//2)]
+                    rawsegsvid += 1
+
+    return svcallset
+
+# function not been excuted in classify_read.py?
+def detect_sam(filename, readpath, writepath, chromosomes, min_size, max_size, record_depth, if_rawsvcall):
+    print('Start to detect SVs from '+filename)
+    f = pysam.AlignmentFile(readpath+filename, 'r')
+    allread = f.fetch()
+    if if_rawsvcall:
+        g = open(writepath+'sv_raw_calls/'+filename[:-4]+'.debreak.temp', 'w')
+    else:
+        g = open(writepath+filename[:-4]+'.debreak.temp', 'w')
+
+    lastname = ''
+    segments = ['']
+    totalmaplength = 0
+    for c in allread:
+        # remove headerlines, secondary alignments, alignment on scallfolds
+        if c.is_secondary or c.flag == 4:
+            continue
+        if chromosomes != [] and c.reference_name not in chromosomes:
+            continue
+        # detect the deletion from cigar
+        readname = c.query_name
+        flag = str(c.flag)
+        chrom = c.reference_name
+        position = c.reference_start
+        mappingquality = str(c.mapq)
+        readseq = c.query_sequence
+        cigar = c.cigarstring
+        cigarinfo = cigardeletion(
+            flag, chrom, position, cigar, min_size, max_size)
+        refend = position+cigarinfo[1]
+        str(cigarinfo[2][0])+'\t' + \
+            str(cigarinfo[2][1])+'\t'+str(cigarinfo[2][2])
+        # if primary: write deletions from cigar string
+        if not c.is_supplementary:
+            cigarsv = cigarinfo[0]
+            totalmaplength += c.query_length
+            rawsvid = 0
+            for d in cigarsv:
+                rawsvid += 1
+                if 'I-cigar' in d:
+                    insertseq = readseq[d[4]:d[4]+d[2]]
+                    g.write(d[0]+'\t'+str(d[1])+'\t'+str(d[2])+'\t'+d[3]+'\t'+readname +
+                            '_cigar'+str(rawsvid)+'\t'+flag+'\t'+mappingquality+'\t'+insertseq+'\n')
+                else:
+                    g.write(d[0]+'\t'+str(d[1])+'\t'+str(d[2])+'\t'+d[3]+'\t' +
+                            readname+'_cigar'+str(rawsvid)+'\t'+flag+'\t'+mappingquality+'\n')
+            readinfo = [readname, flag, chrom, position,
+                        refend, cigarinfo[2], mappingquality, readseq]
+        else:
+            readinfo = [readname, flag, chrom, position,
+                        refend, cigarinfo[2], mappingquality, '']
+        if readname != lastname:
+            if 1 < len(segments) <= 20:
+                segmentd = segmentdeletion(segments, min_size, max_size)
+                for d in segmentd:
+                    g.write(d+'\n')
+            lastname = readname
+            segments = [readinfo]
+        else:
+            segments += [readinfo]
+    if 1 < len(segments) <= 20:
+        segmentd = segmentdeletion(segments, min_size, max_size)
+        for d in segmentd:
+            g.write(d+'\n')
+    segments = []
+
+    f.close()
+    g.close()
+    if record_depth and totalmaplength > 0:
+        f = open(writepath+'map_depth/maplength_'+filename, 'w')
+        f.write(str(totalmaplength)+'\n')
+        f.close()
+    return True
+
+# function not been excuted in classify_read.py?
+def detect_sortbam(filename, writepath, min_size, max_size, chrom, chromosomes, record_clip, ifrescuedup, iftumor):
+    print('Start to detect SV from '+filename)
+    samfile = pysam.AlignmentFile(filename, "rb")
+    tempfile = open(writepath+'sv_raw_calls/'+filename.split('/')
+                    [-1]+'-'+chrom+'.debreak.temp', 'w')
+    allreads = samfile.fetch(chrom)
+    segmentreads = {}
+    clipinfo = []
+    totalmaplength = 0
+    for align in allreads:
+        if align.is_unmapped or align.is_secondary:
+            continue
+        readname = align.query_name
+        flag = align.flag
+        position = align.reference_start+1
+        mappingquality = align.mapping_quality
+        cigar = align.cigar
+        readclipinfo = chrom
+        readstart = align.reference_start
+        readstop = align.reference_end
+        if record_clip and (cigar[0][0] in [4, 5] and cigar[0][1] >= 200) or (cigar[-1][0] in [4, 5] and cigar[-1][1] >= 200):
+            if (cigar[0][0] == 4 or cigar[0][0] == 5) and cigar[0][1] >= 200:
+                readclipinfo += '\t0\t'+str(readstart)
+            else:
+                readclipinfo += '\t'+str(readstart)+'\t0'
+            if (cigar[-1][0] == 4 or cigar[-1][0] == 5) and cigar[-1][1] >= 200:
+                readclipinfo += '\t0\t'+str(readstop)
+            else:
+                readclipinfo += '\t'+str(readstop)+'\t0'
+            clipinfo += [readclipinfo]
+
+        if align.is_supplementary:
+            cigarinfo = [0, 0, 0]
+            cigarleft = align.cigar[0]
+            cigarright = align.cigar[-1]
+            if cigarleft[0] == 4 or cigarleft[0] == 5:
+                cigarinfo[0] = cigarleft[1]
+            if cigarright[0] == 4 or cigarright[0] == 5:
+                cigarinfo[2] = cigarright[1]
+            cigarinfo[1] = align.query_alignment_length
+            refend = align.reference_end+1
+            readinfo = [readname, flag, chrom, int(
+                position), refend, cigarinfo, mappingquality, '']
+            if readname in segmentreads:
+                segmentreads[readname] += [readinfo]
+            else:
+                segmentreads[readname] = [readinfo]
+        else:
+            cigar = align.cigarstring
+            readseq = align.query_sequence
+            cigarinfo = cigardeletion(
+                flag, chrom, position, cigar, min_size, max_size)
+            cigarsv = cigarinfo[0]
+            totalmaplength += align.query_length
+            rawsvid = 0
+            for d in cigarsv:
+                rawsvid += 1
+                if 'I-cigar' in d:
+                    insertseq = readseq[d[4]:d[4]+d[2]]
+                    if ifrescuedup:
+                        rawseq = readseq[:d[4]]+readseq[d[4]+d[2]:]
+                    else:
+                        rawseq = ''
+                    tempfile.write(d[0]+'\t'+str(d[1])+'\t'+str(d[2])+'\t'+d[3]+'\t'+readname+'_cigar'+str(
+                        rawsvid)+'\t'+str(flag)+'\t'+str(mappingquality)+'\t'+str(d[4])+'\t'+insertseq+'\t'+rawseq+'\n')
+                else:
+                    tempfile.write(d[0]+'\t'+str(d[1])+'\t'+str(d[2])+'\t'+d[3]+'\t'+readname +
+                                   '_cigar'+str(rawsvid)+'\t'+str(flag)+'\t'+str(mappingquality)+'\n')
+
+            if align.has_tag("SA"):
+                refend = position+cigarinfo[1]
+                readinfo = [readname, flag, chrom, position, refend,
+                            cigarinfo[2], mappingquality, align.query_sequence]
+                if readname in segmentreads:
+                    segmentreads[readname] += [readinfo]
+                else:
+                    segmentreads[readname] = [readinfo]
+                suppaligns = align.get_tag("SA").split(';')[:-1]
+                for c in suppaligns:
+                    if c.split(',')[0] == chrom or c.split(',')[0] not in chromosomes:
+                        continue
+                    if c.split(',')[2] == '+':
+                        suppflag = 2048
+                    else:
+                        suppflag = 2064
+                    cigarinfo = simplifycigar(c.split(',')[3])
+                    suppinfo = [readname, suppflag, c.split(',')[0], int(c.split(',')[1]), int(
+                        c.split(',')[1])+cigarinfo[1], cigarinfo, c.split(',')[4]]
+                    segmentreads[readname] += [suppinfo]
+    for readgroup in segmentreads:
+        if len(segmentreads[readgroup]) < 2 or len(segmentreads[readgroup]) > 20:
+            continue
+        if iftumor:
+            segmentsv = segmentdeletion_tumor(
+                segmentreads[readgroup], min_size, max_size)
+        else:
+            segmentsv = segmentdeletion(
+                segmentreads[readgroup], min_size, max_size)
+        for d in segmentsv:
+            tempfile.write(d+'\n')
+    tempfile.close()
+    if record_clip:
+        f = open(writepath+'debreak_ins_workspace/readinfo_start_end_'+chrom, 'w')
+        for c in clipinfo:
+            f.write(c+'\n')
+        f.close()
+    print(chrom+' is done with maplength: '+str(totalmaplength))
+    if totalmaplength != 0:
+        f = open(writepath+'map_depth/maplength_'+chrom, 'w')
+        f.write(str(totalmaplength)+'\n')
+        f.close()
+    return True
