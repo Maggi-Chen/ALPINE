@@ -1,0 +1,12 @@
+{
+  "line-length": {
+    "strict": false,
+    "stern": true,
+    "code_blocks": false,
+    "line_length": 120,
+    "tables": false
+  },
+  "no-duplicate-heading": {
+    "siblings_only": true
+  }
+}

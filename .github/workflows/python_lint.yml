@@ -1,0 +1,25 @@
+name: python-linting
+
+on: [push]
+
+jobs:
+  lint_python:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+  
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install libcurl4-openssl-dev
+        python3 -m pip install --upgrade pip
+        pip install pylint pytest
+        pip install -r launcher/requirements.txt
+    - name: Run unit tests
+      run: |
+        cd launcher/
+        PYTHONPATH=src/ pytest --cov --cov-report=term
+    - name: Analyzing launcher code with pylint
+      run: |
+        PYTHONPATH="launcher/src/" pylint --max-line-length=120 --recursive=true launcher/src/
+

@@ -1,0 +1,40 @@
+name: Publish Markdown to Confluence
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          #pip install atlassian-python-api markdown 
+          pip install markdown-to-confluence
+
+      - name: Push README.md to Confluence
+        run: |
+          #python scripts/push_to_confluence.py
+          python3 -m md2conf README.md
+
+        env:
+            #CONFLUENCE_URL: ${{ vars.CONFLUENCE_URL }}
+            #CONFLUENCE_USER: ${{ secrets.CONFLUENCE_USER }}
+            #CONFLUENCE_TOKEN: ${{ secrets.CONFLUENCE_TOKEN }}
+            CONFLUENCE_DOMAIN: ${{ vars.CONFLUENCE_DOMAIN }} # confluence.web.bms.com
+            CONFLUENCE_PATH: '/'
+            CONFLUENCE_USER_NAME: ${{ secrets.CONFLUENCE_USER }}
+            CONFLUENCE_API_KEY: ${{ secrets.CONFLUENCE_TOKEN }}
+            CONFLUENCE_SPACE_KEY: 'KSR'
