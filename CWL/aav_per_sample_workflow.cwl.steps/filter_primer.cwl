@@ -10,7 +10,7 @@ requirements:
   coresMin: 8
   ramMin: 32000
 - class: DockerRequirement
-  dockerPull: aavlr_filter:1.2
+  dockerPull: aavlr_filter:1.6
 - class: InlineJavascriptRequirement
 
 baseCommand: ["python","/opt/filter_fastq_gz.py"]
@@ -38,9 +38,37 @@ inputs:
       prefix: --sample
   - id: min_qual
     type: float?
+  - id: primer_check_length
+    type: int?
     inputBinding:
-      position: 6
-      prefix: --min_qual
+      position: 5
+      prefix: --primer_check_length
+  - id: data_type
+    type:
+      - 'null'
+      - name: data_choices
+        type: enum
+        symbols:
+          - pacbio-hifi
+          - nanopore
+    default: "pacbio-hifi"
+
+arguments:
+- position: 6
+  valueFrom: |-
+    ${
+        if (inputs.min_qual !== null && inputs.min_qual !== undefined) {
+            return "  --min_qual " + inputs.min_qual;
+        } else {
+            if (inputs.data_type == "nanopore") {
+                return "  --min_qual 10 ";
+            } else {
+                return " ";
+            }
+        }
+    }
+  shellQuote: false
+
 
 outputs:
   - id: filtered_fastq

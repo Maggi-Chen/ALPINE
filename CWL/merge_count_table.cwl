@@ -1,6 +1,6 @@
 cwlVersion: v1.2
 class: CommandLineTool
-label: Merge Classification tables v1.4
+label: Merge Classification tables v1.6
 $namespaces:
   sbg: https://sevenbridges.com
 

@@ -1,6 +1,6 @@
 cwlVersion: v1.2
 class: Workflow
-label: Transgene Integration LR workflow v1.4
+label: Transgene Integration LR workflow v1.6
 $namespaces:
   sbg: https://sevenbridges.com
 
@@ -42,20 +42,19 @@ inputs:
   - id: min_qual
     type: float?
     label: Minimal average base quality
-    doc: Sequencing reads with average Phred base quality below this cutoff will be filtered out. Default is 30. 
+    doc: Sequencing reads with average Phred base quality below this cutoff will be filtered out. If not specified, defaults based on data_type - pacbio-hifi (30), nanopore (10).
   - id: five_prime_HA_seq
-    type: string
+    type: string?
     label: 5' Homology Arm Sequence
     doc: 5' Homology Arm sequence in 5'->3' direction.
   - id: three_prime_HA_seq
-    type: string
+    type: string?
     label: 3' Homology Arm Sequence
     doc: 3' Homology Arm sequence in 5'->3' direction.
   - id: HA_Seq_match_ratio
     type: float?
-    default: 0.98
     label: Homology Arm Sequence Match Ratio
-    doc: Homology Arm Sequence Match Ratio. Default is 0.98.
+    doc: Homology Arm Sequence Match Ratio. If not specified, defaults based on data_type - pacbio-hifi (0.98), nanopore (0.90)
   - id: left_itr_seq
     type: string?
     label: Left Side ITR Sequence
@@ -74,6 +73,29 @@ inputs:
     default: 80
     label: Percent Identity
     doc: Min percent identity to match a ITR sequence for blastn. Default is 80.
+  - id: data_type
+    type:
+      - 'null'
+      - name: data_choices
+        type: enum
+        symbols:
+          - pacbio-hifi
+          - nanopore
+    default: "pacbio-hifi"
+    label: Data Type
+    doc: Sequencing platform of input data (pacbio-hifi, nanopore). Default is pacbio-hifi.
+  - id: variant_window
+    type: int?
+    label: Variant Calling Window
+    doc: Variant calling window on both side of cleavage site on WT sequence. (Default is 20).
+  - id: primer_check_length
+    type: int?
+    label: Primer Check Length
+    doc: Length in base pairs from each end of the read to search for PCR primer sequences. (default is 50).
+  - id: min_itr_length
+    type: int?
+    label: Minimal ITR Length
+    doc: Minimal ITR Length for NonHDR-with-ITR class. (Default is 10).
 
 outputs:
   - id: grouped_outputs
@@ -99,6 +121,10 @@ steps:
       source: sample_name
     - id: min_qual
       source: min_qual
+    - id: primer_check_length
+      source: primer_check_length
+    - id: data_type
+      source: data_type
     run: aav_per_sample_workflow.cwl.steps/filter_primer.cwl
     out:
     - id: filtered_fastq
@@ -113,6 +139,8 @@ steps:
       source: filter_primer/filtered_fastq
     - id: reffile
       source: reffile
+    - id: data_type
+      source: data_type
     run: aav_per_sample_workflow.cwl.steps/align_minimap2.cwl
     out:
     - id: aligned_sam
@@ -157,9 +185,17 @@ steps:
       source: seed_size
     - id: perc_identity
       source: perc_identity
+    - id: data_type
+      source: data_type
+    - id: variant_window
+      source: variant_window
+    - id: min_itr_length
+      source: min_itr_length
     run: aav_per_sample_workflow.cwl.steps/classify_read.cwl
     out:
     - id: read_classification
+    - id: stdout_log
+    - id: stderr_log
 
   - id: count_read
     label: Count Read
@@ -187,6 +223,8 @@ steps:
           - filter_primer/filtered_histogram_plot
           - samtools_sort/sorted_bam
           - classification/read_classification
+          - classification/stdout_log
+          - classification/stderr_log
           - count_read/count_table
           - count_read/pie_chart
     run: aav_per_sample_workflow.cwl.steps/group_output.cwl

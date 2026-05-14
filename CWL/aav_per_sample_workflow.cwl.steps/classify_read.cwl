@@ -10,10 +10,13 @@ requirements:
   coresMin: 8
   ramMin: 32000
 - class: DockerRequirement
-  dockerPull:  aavlr_classify:1.4.1
+  dockerPull:  aavlr_classify:1.6.0
 - class: InlineJavascriptRequirement
 
 baseCommand: ["python","/opt/classify_read.py"]
+
+stdout: classify_stdout.log
+stderr: classify_stderr.log
 
 inputs:
   - id: bamfile
@@ -50,12 +53,12 @@ inputs:
       position: 5
       prefix: -fq
   - id: five_prime_HA_seq
-    type: string
+    type: string?
     inputBinding:
       position: 7
       prefix: --five_prime_HA_arm_seq
   - id: three_prime_HA_seq
-    type: string
+    type: string?
     inputBinding:
       position: 8
       prefix: --three_prime_HA_arm_seq
@@ -84,9 +87,39 @@ inputs:
     inputBinding:
       position: 13
       prefix: --perc_identity
-  
+  - id: data_type
+    type:
+      - 'null'
+      - name: data_choices
+        type: enum
+        symbols:
+          - pacbio-hifi
+          - nanopore
+    default: "pacbio-hifi"
+    inputBinding:
+      position: 14
+      prefix: --data_type
+  - id: variant_window
+    type: int?
+    inputBinding:
+      position: 15
+      prefix: --variant_window
+  - id: min_itr_length
+    type: int?
+    inputBinding:
+      position: 16
+      prefix: --min_itr_length
+
 outputs:
   - id: read_classification
     type: File
     outputBinding:
-      glob: "$(\"readname_\"+inputs.sample_name+\".txt\")\n"
+      glob: "$('readname_'+inputs.sample_name+'.txt')"
+  - id: stdout_log
+    type: File
+    outputBinding:
+      glob: classify_stdout.log
+  - id: stderr_log
+    type: File
+    outputBinding:
+      glob: classify_stderr.log

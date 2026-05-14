@@ -25,16 +25,39 @@ inputs:
       position: 1
   preset:
     type: string?
-    default: "map-hifi"
     inputBinding:
       position: 3
       prefix: -x
+      valueFrom: |
+        ${
+          if (inputs.preset !== null && inputs.preset !== undefined) {
+            return inputs.preset;
+          } else {
+            var data_type = inputs.data_type;
+            if (data_type === "pacbio-hifi") {
+              return "map-hifi";
+            } else if (data_type === "nanopore") {
+              return "map-ont";
+            } else {
+              return "map-hifi";
+            }
+          }
+        }
   thread:
     type: int?
     default: 8
     inputBinding:
       position: 4
       prefix: -t
+  data_type:
+    type:
+      - 'null'
+      - name: data_choices
+        type: enum
+        symbols:
+          - pacbio-hifi
+          - nanopore
+    default: "pacbio-hifi"
 
 
 outputs:
