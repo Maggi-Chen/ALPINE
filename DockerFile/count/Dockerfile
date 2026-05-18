@@ -13,7 +13,12 @@ RUN apt install -y \
 
 WORKDIR /opt/
 
-COPY . /opt/
+# Copy local files and shared module
+# Note: Build with context as DockerFile/ directory:
+#   docker build -f count/Dockerfile -t aavlr_count .
+COPY count/ /opt/
+COPY shared/column_order.py /opt/column_order.py
+
 RUN python3 -m venv env && \
     env/bin/python3 -m pip install --upgrade pip && \
     env/bin/pip install -r requirements.txt

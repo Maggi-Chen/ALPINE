@@ -12,7 +12,7 @@ def cigardeletion(flag, chrom, position, cigar, min_size, max_size):
     """
 
     flag = int(flag)
-    if flag <= 16:  # needed?
+    if flag <= 16:  
         detect_cigar_sv = True
     else:
         detect_cigar_sv = True
@@ -237,7 +237,7 @@ def segmentdeletion(segments, min_size, max_size):
     return svcallset
 
 # input a list of segments,return list of deletions
-def segmentdeletion_tumor(segments, min_size, max_size):
+def segmentdeletion_tumor(segments, min_size, max_size, min_alignment_len=300):
     """
     Take a list of read segments and detect various types of SV
     (deletions, duplications, inversions, translocations) based on size criteria and segment information
@@ -266,7 +266,7 @@ def segmentdeletion_tumor(segments, min_size, max_size):
         for c in others:
             ch = c[2]
             f = int(c[1]) % 32 > 15
-            if c[5][1] < 300:
+            if c[5][1] < min_alignment_len:
                 continue
             if ch != chrom:
                 diffchr += [c]
@@ -286,6 +286,7 @@ def segmentdeletion_tumor(segments, min_size, max_size):
                 continue
             leftinfo = leftread[5]
             rightinfo = rightread[5]
+
         # insertion:
             if abs(rightread[3]-leftread[4]) <= 300:
                 overlap = rightread[3]-leftread[4]

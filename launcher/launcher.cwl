@@ -62,14 +62,14 @@ inputs:
       prefix: --min_qual
       shellQuote: false
   five_prime_HA_seq:
-    type: string
+    type: string?
     label: 5' Homology Arm Sequence
     doc: 5' Homology Arm sequence in 5'->3' direction.
     inputBinding:
       prefix: --five_prime_HA_seq
       shellQuote: false
   three_prime_HA_seq:
-    type: string
+    type: string?
     label: 3' Homology Arm Sequence
     doc: 3' Homology Arm sequence in 5'->3' direction.
     inputBinding:
@@ -102,6 +102,40 @@ inputs:
     doc: Right ITR sequence in 5'->3' direction.
     inputBinding:
       prefix: --right_itr_seq
+      shellQuote: false
+  data_type:
+    type:
+      - 'null'
+      - name: data_choices
+        type: enum
+        symbols:
+          - pacbio-hifi
+          - nanopore
+    label: Data Type
+    doc: Sequencing platform of input data (pacbio-hifi, nanopore). Default is pacbio-hifi.
+    inputBinding:
+      prefix: --data_type
+      shellQuote: false
+  variant_window:
+    type: int?
+    label: Variant Calling Window
+    doc: Variant calling window on both side of cleavage site on WT sequence. Default is 20.
+    inputBinding:
+      prefix: --variant_window
+      shellQuote: false
+  primer_check_length:
+    type: int?
+    label: Primer Check Length
+    doc: Length in base pairs from each end of the read to search for PCR primer sequences. default is 50.
+    inputBinding:
+      prefix: --primer_check_length
+      shellQuote: false
+  min_itr_length:
+    type: int?
+    label: Minimal ITR Length
+    doc: Minimal ITR Length for NonHDR-with-ITR class. Default is 10.
+    inputBinding:
+      prefix: --min_itr_length
       shellQuote: false
   disable_reuse:
     type: boolean?

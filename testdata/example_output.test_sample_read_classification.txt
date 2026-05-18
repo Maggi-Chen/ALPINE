@@ -1,0 +1,2 @@
+#Sample	Unmodified	Unmodified-with-SNP	DEL-small	INS-small	DEL-large	INS-large	HDR-CD19	HDR-CD22	Non-HDR-with-ITR-CD19	Non-HDR-with-ITR-CD22	Non-HDR-without-ITR-CD19	INV	DUP	Unclassified
+test_sample	1	1	1	1	1	1	1	1	2	1	1	0	0	0

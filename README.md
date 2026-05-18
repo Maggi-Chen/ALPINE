@@ -1,11 +1,7 @@
-<!-- confluence-page-id: 490111950 -->
-<!-- confluence-space-key: KSR -->
-<!-- generated-by: Do not edit. This page was auto-generated from the pipeline repo. -->
-
 # ALPINE: AAV integration evaluation using targeted long-read sequencing data
 
-This repo represents ALPINE  pipeline for AAV integration evaluation using targeted long-read
-sequencing data. It contains Docker files, CWL workflows, multi-platform launcher code, and other scripts used for
+This repo represents ALPINE pipeline for AAV integration evaluation using targeted long-read
+sequencing data from both PacBio HiFi and Oxford Nanopore platforms. It contains Docker files, CWL workflows, multi-platform launcher code, and other scripts used for
 on-target AAV integration evaluation.
 
 ## Table of Contents
@@ -26,6 +22,7 @@ on-target AAV integration evaluation.
   - [Sample name](#sample-name)
   - [Optional inputs](#optional-inputs)
   - [Inputs for merge classification table step](#inputs-for-merge-classification-table-step)
+- [Test Data and Examples](#test-data-and-examples)
 - [Outputs](#outputs)
   - [Per-sample outputs](#per-sample-outputs)
     - [Filtered FASTQ](#filtered-fastq)
@@ -33,20 +30,21 @@ on-target AAV integration evaluation.
     - [Read annotation](#read-annotation)
     - [Single-sample classification table](#single-sample-classification-table)
   - [Merged classification table](#merged-classification-table)
+  - [ALPINE Output Classification Categories](#alpine-output-classification-categories)
 - [How to run pipeline](#how-to-run-pipeline)
 - [Update workflows in SBG and Arvados](#update-workflows-in-sbg-and-arvados)
 - [Contacts](#contacts)
 
 ## Overview
 
-This pipeline evaluates on-target AAV integration efficiency by analyzing targeted long-read sequencing data.  
+ALPINE (AAV Long-read Integration Analysis Pipeline) evaluates on-target AAV integration efficiency by analyzing targeted long-read sequencing data from PacBio HiFi and Oxford Nanopore platforms.
 
 ## Steps
 
 ![plot](./workflow_pipeline.png)
 
-The AAV analusis pipeline main includes two steps, per-sample AAV analysis step and merge count table step. Per-sample
-AAV analysis workflow is run on all samples individually to classify reads into 10 categories and count reads in each
+The ALPINE analysis pipeline mainly includes two steps: per-sample AAV analysis step and merge count table step. Per-sample
+AAV analysis workflow is run on all samples individually to classify reads into multiple categories and count reads in each
 category. After all samples are processed through per-sample workflow, merge count table step merges results from all
 samples together into a merged table.
 
@@ -55,7 +53,7 @@ samples together into a merged table.
 Per-sample AAV analysis step includes four parts: Read filtering, Read alignment, Read classification, and Read
 counting.  
 Input files of per-sample AAV analysis include sequencing reads (FASTQ), reference sequences (FASTA), vector config file
-(TSV); and outputs include filtered sequencing reads (FASTQ), alignment file (BAM), read clssification results (TXT),
+(TSV); and outputs include filtered sequencing reads (FASTQ), alignment file (BAM), read classification results (TXT),
 and read count table (TXT).
 
 #### Read filtering
@@ -66,13 +64,13 @@ Filtering criteria include:
 __a. Read completeness.__
 Complete sequencing reads are expected to include PCR primer sequences on both ends when PCR amplification is performed
 for targeted sequencing. Sequencing reads without primer sequences on either end are filtered out due to truncation.  
-Considering high sequencing error rate of long-read data, a 10-bp sliding window is used to check presence/absense of
-primer sequence. The primer sequence is considered as present if any sequential 10 bases of the primer is presentin the
-first/last 100 bp of the sequencing read.  
+Considering high sequencing error rate of long-read data, a 10-bp sliding window is used to check presence/absence of
+primer sequence. The primer sequence is considered as present if any sequential 10 bases of the primer is present in the
+first/last 100 bp of the sequencing read.
 (e.g., for a 25-bp forward primer sequence, 16 sub-sequences of 10bp (sub-sequence from base 1-10, 2-11, 3-12, ..., and
 16-25) will be used to check if the subsequence is present in first 100-bp of the sequencing read. If any one of these
-16 subsequence is present, then this sequencing read is considered to include forward primer at beginning.)  
-Reverse compelemntary sequences of primer sequneces will also be checked in case read is from anti-sense thread.
+16 subsequences is present, then this sequencing read is considered to include forward primer at beginning.)
+Reverse complementary sequences of primer sequences will also be checked in case read is from anti-sense strand.
 Sequencing reads containing only 1 side of primer sequence or neither side will be filtered out.  
 If only forward or only reverse primer sequence is provided, then read filtering step will only check primer for one
 side and skip the other side. If no primer sequence is provided (i.e. when no PCR is conducted, or user wants to disable
@@ -81,13 +79,12 @@ will pass this filter.
   
 __b. Base quality.__
 Average base quality of a sequencing read is calculated based on the Phred quality score for all bases from the input
-FATSQ file. Sequencing reads with average base quality below input "Minimal average base quality" (default value of 30)
+FASTQ file. Sequencing reads with average base quality below input "Minimal average base quality" (default varies by platform: PacBio HiFi = 30, Nanopore = 10)
 are filtered out due to low quality.
 
 #### Read alignment
 
-Filtered sequencing reads are then aligned to the reference sequences using minimap2. By default, a preset of alignment
-settings ("-x map-hifi") is used for aligning PacBio HiFi data.  
+Filtered sequencing reads are then aligned to the reference sequences using minimap2. The alignment preset is automatically selected based on the sequencing platform: "-x map-hifi" for PacBio HiFi data and "-x map-ont" for Oxford Nanopore data.
 Read alignment file is then sorted and indexed using Samtools.
 
 #### Read classification
@@ -111,10 +108,10 @@ assigned as HDR/Non-HDR-without-ITR depending on of integration length (cutoff i
 If the read alignment contains less than 10bp of HDR sequence, it will be re-aligned against only the WT sequence from
 input reference and then re-processed as a read aligned to WT as described below in #c.  
   
-__b. Process alignments on WT sequence.__ For reads aligned to wildtype (WT) seqeunce, if there are >100bp unaligned
-sequences on either end of the alignment, the unaligned sequences will be extracted and re-align as descripbed in #d.
+__b. Process alignments on WT sequence.__ For reads aligned to wildtype (WT) sequence, if there are >100bp unaligned
+sequences on either end of the alignment, the unaligned sequences will be extracted and re-aligned as described in #d.
 Variant calling is performed on the read alignments to detect SNPs, indels (large and small), inversions, and
-duplications within 20bp window on both sides of the cleavage site.  
+duplications within a configurable window (default 20bp) on both sides of the cleavage site.
 If there is no variants reported, the read will be assigned as Unmodified.  
 If only one type of variant is reported (e.g. only a 10bp DEL is reported for ReadA, two SNPs are reported for ReadB),
 the read will be assigned to the corresponding variant category (e.g. ReadA -> DEL-small, ReadB -> SNP).  
@@ -130,18 +127,18 @@ as described in #b.
   
 __d. Re-aligning unmapped sequence.__ For reads aligned to WT with >100bp unmapped sequence (present as soft or hard
 clip) on either end of the alignment, we first check all other supplementary alignments of the same read to make sure
-these unmapped sequence are not mapped to any reference sequences. A new reference sequence file containing only HDR
-and ITR sequences from original input reference is created and used to re-align these unmapped sequecnes using
-"minimap2 -x map-hifi".  
+these unmapped sequences are not mapped to any reference sequences. A new reference sequence file containing only HDR
+and ITR sequences from original input reference is created and used to re-align these unmapped sequences using
+minimap2 with platform-specific presets ("map-hifi" for PacBio, "map-ont" for Nanopore).
 If the unmapped sequence can be aligned to HDR/ITR, the new alignment result will then be processed as "aligned to
-HDR/ITR" as described in #a.  
+HDR/ITR" as described in #a.
 If the unmapped sequence still cannot be aligned to HDR/ITR, the read will be processed as "aligned to WT" as described
-in #b.  
+in #b.
   
 __e. Re-aligning INS sequence.__ If a large (>50bp) insertion is reported for a read, re-aligning is performed to check
 if inserted sequence is actually coming from AAV vector.
-For reads containing large INS, the inserted sequence is extarced (e.g. a 1500bp INS is reported for ReadD, this 1500bp
-sequence will be extracted, not the entire read) and re-aligned to the original input reference file.  
+For reads containing large INS, the inserted sequence is extracted (e.g. a 1500bp INS is reported for ReadD, this 1500bp
+sequence will be extracted, not the entire read) and re-aligned to the original input reference file.
 If the inserted sequence is aligned to HDR/ITR sequence, this new alignment result will then be processed as "aligned
 to HDR/ITR" as described in #a.
 Otherwise, this read will be classified as INS-large.  
@@ -150,7 +147,7 @@ Otherwise, this read will be classified as INS-large.
 
 Read counting step takes read classification result table (readname_$(SAMPLE_NAME).txt) as input and counts number of
 reads in each read category.
-A customized Python script is used to read the input table, count occurance of each read category in second column, and
+A customized Python script is used to read the input table, count occurrence of each read category in second column, and
 write a tab-delimited text file to list number of reads in each category.
 
 ### Merge classification table
@@ -170,7 +167,7 @@ includes a list of read annotation results from per-sample step for all samples.
 
 ### Sequencing FASTQ
 
-Long-read sequencing data of the sample. File can be in FASTQ or zipped FASTQ.GZ format. Currently only 1 FASTQ/FASTQ.GZ
+Long-read sequencing data of the sample from PacBio HiFi or Oxford Nanopore platforms. File can be in FASTQ or zipped FASTQ.GZ format. Currently only 1 FASTQ/FASTQ.GZ
 file is allowed as input. If there are multiple FASTQ files for one sample, merge them into one FASTQ file before
 running this pipeline.
 
@@ -184,7 +181,7 @@ WT, HDR and ITR, representing differen outcomes of AAV integration:
 - WT - Wildtype sequence covering the cleavage site. Sequence is usually identical with the human reference genome such
 as GRCh38 or GRCh37.
 - HDR - HDR knock in of AAV vector, containing trans gene sequence from AAV between the cleavage site.
-- ITR - ITR integration of AAV vector. Containing ITR seuqnece and HA sequence on both side of the trans gene sequence.
+- ITR - ITR integration of AAV vector. Containing ITR sequence and HA sequence on both side of the trans gene sequence.
 
 This reference file should contain at least wildtype (WT) sequence and ITR sequence for each AAV vector. It is good to
 include HDR sequence as well.  
@@ -224,7 +221,7 @@ example below). Do not use a new name (such as WT or NA), which will mislead the
 vector.
 - Order of columns must follow the order as listed above (see example below). Order of rows does not matter.
   
-An example vector file matched with previous referecne sequence file is like:
+An example vector file matched with previous reference sequence file is like:
 
 \#AAV_Vector | Ref_Name | Ref_Type | ITR1_start | ITR1_end | gene_start | gene_end | ITR2_start | ITR2_end
 :-|:-|:-|:-|:-|:-|:-|:-|:-
@@ -246,11 +243,19 @@ A string of Sample Name is used as prefix to name output files. Do not include s
 
 ### Optional inputs
 
-- Minimal average base quality - Cutoff used in read filtering step. Sequencing reads with average Phred base quality
-below this cutoff will be filtered out. Default value is 30.
-- Truncated HDR/ITR Threshold - Truncated HDR/ITR threshold. Input value should be a percentage between 0-1. Reads
-containing HDR/ITR integration with length shorter than this percentage of full length integration will be classificed
-as Non-HDR with/without ITR (see more details in Steps - Read classification section). Default value is 0.95.
+- **Data Type** - Sequencing platform type. Choices: "pacbio-hifi" or "nanopore". This parameter determines the minimap2 alignment preset and platform-specific thresholds. Default value is "pacbio-hifi".
+- **Minimal average base quality** - Cutoff used in read filtering step. Sequencing reads with average Phred base quality below this cutoff will be filtered out. Default based on data type: PacBio HiFi (30), Nanopore (10).
+- **Truncated HDR/ITR Threshold** - Truncated HDR/ITR threshold. Input value should be a percentage between 0-1. Reads containing HDR/ITR integration with length shorter than this percentage of full length integration will be classified as Non-HDR with/without ITR. Default value is 0.99.
+- **Variant Window** - Size of the window (in bp) around the cleavage site for variant detection. Default value is 20bp (±20bp from cleavage site).
+- **Primer Check Length** - Length in base pairs from each end of the read to search for PCR primer sequences. Default value is 50bp.
+- **Minimum ITR Length** - Minimum ITR sequence coverage required for ITR classification. Default value is 10bp.
+- **5' Homology Arm Sequence** - 5' Homology Arm sequence in 5'->3' direction for HDR validation.
+- **3' Homology Arm Sequence** - 3' Homology Arm sequence in 5'->3' direction for HDR validation.
+- **HA Sequence Match Ratio** - Homology arm sequence identity threshold for HDR validation. Default based on data type: PacBio HiFi (0.98), Nanopore (0.90).
+- **Left ITR Sequence** - Left ITR sequence in 5'->3' direction for ITR detection.
+- **Right ITR Sequence** - Right ITR sequence in 5'->3' direction for ITR detection.
+- **Seed Size** - Seed size for blastn alignment of ITR sequences. Default value is 15.
+- **Percent Identity** - Minimum percent identity to match ITR sequences for blastn. Default value is 80.
 
 ### Inputs for merge classification table step
 
@@ -259,6 +264,33 @@ Inputs for merge classification table step are the single-sample read classifica
 - Read classification file - read classification output file from the per-sample workflow. Default file names are like
 "$(SAMPLE_NAME)_read_classification.txt". Select this output file for all samples in the study so that a merged table
 containing all samples will be generated for easier comparison and plot generation.
+
+For detailed explanations of all output classification categories, see the [ALPINE Output Classification Categories](#alpine-output-classification-categories) section.
+
+## Test Data and Examples
+
+The `testdata/` folder contains example input and output files to help users understand the expected file formats and test the ALPINE pipeline:
+
+### Example Input Files
+- **`example_input.test_sample.fastq`** - Sample FASTQ file with long-read sequencing data
+- **`example_ref.reference_trac.fa`** - Reference sequence file containing WT, HDR, and ITR sequences for TRAC locus
+- **`example_ref.config_trac.txt`** - Vector configuration file specifying AAV vector details and genomic coordinates
+- **`example_input.yaml`** - CWL workflow input parameter file showing how to configure pipeline runs
+
+### Example Output Files
+- **`example_output.readname_test_sample.txt`** - Per-read classification results with read names, categories, and variant sizes
+- **`example_output.test_sample_read_classification.txt`** - Summary count table showing number of reads in each classification category
+
+### Usage
+These test data files serve multiple purposes:
+- **Format templates**: Use as examples for preparing your own input files with correct formatting
+- **Pipeline testing**: Run ALPINE with these files to verify proper installation and functionality
+- **Parameter reference**: The YAML file demonstrates how to specify optional parameters for different experimental setups
+
+To run ALPINE with the test data:
+```bash
+cwl-runner CWL/aav_per_sample_workflow.cwl testdata/example_input.yaml
+```
 
 ## Outputs
 
@@ -294,20 +326,7 @@ sequence_read_1 | DEL-small | 5
 __sequence_read_2__ | __HDR-AAV1__ | __1000__
 __sequence_read_3__ | __Non-HDR-without-ITR-AAV2__ | __1200__
   
-There are 10 read categories:
-
-- Unmodified - No modifications introduced within 20bp on both side of cleavage site.
-- DEL-large - Contains deletion (>=50bp) spanning cleavage site or within 20bp on both side of cleavage site.
-- DEL-small - Contains deletion (<50bp) spanning cleavage site or within 20bp on both side of cleavage site.
-- INS-large - Contains insertion (>=50bp) within 20bp on both side of cleavage site.
-- INS-small - Contains insertion (<50bp) within 20bp on both side of cleavage site.
-- SNP - Contains SNP or MNP (Multiple nucleotide polymorphism) within 20bp on both side of cleavage site.
-- INV - Contains inversion spanning cleavage site or within 20bp on both side of cleavage site.
-- DUP - Contains duplication spanning cleavage site or within 20bp on both side of cleavage site.
-- HDR - AAV integration by HDR (Homology-Directed Repair).
-- Non-HDR with ITR - Full or trunctaed AAV integration with ITR sequences. At least 10bp of ITR sequence is integrated on either side.
-- Non-HDR without ITR - Non-HDR integration without ITR sequences.
-- Unclassified - Reads that don't fit any other categories, including reads not mapped to HDR/ITR sequences or cleavage site.
+ALPINE classifies reads into multiple categories including unmodified reads, CRISPR-induced variants (deletions, insertions, SNPs, inversions, duplications), AAV integration events (HDR, Non-HDR with/without ITR), and other integration outcomes. See the ALPINE Output Classification Categories section below for detailed descriptions.
 
 #### Single-sample classification table
 
@@ -331,6 +350,30 @@ An example table is like:
 |-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
 SampleA|10|1|0|2|3|7|5|7|1000|10|8|0|0|1
 SampleB|2|4|3|1|5|8|4|1|0|0|1000|20|10|6
+
+### ALPINE Output Classification Categories
+
+ALPINE classifies each sequencing read into one of the following categories based on the detected genomic alterations (numerical thresholds mentioned below represent default settings and are configurable parameters):
+
+#### Unmodified Outcomes
+- **Unmodified**: Reads that align perfectly to the wildtype reference sequence with no detectable variants within the variant calling window. These represent cells that were not edited by the CRISPR system.
+- **Unmodified-with-SNP**: Reads that contain only single nucleotide polymorphisms (SNPs) or substitutions compared to the reference. These likely represent natural genetic variation or sequencing errors rather than CRISPR-induced modifications.
+
+#### Transgene Integration Events
+- **HDR**: Homology-directed repair events where the AAV vector template has been successfully integrated with high fidelity. These reads show coverage of HDR template sequence with high sequence identity to the expected template, with minimal (<10bp) ITR sequence content. These represent the desired precise gene editing outcome.
+- **Non-HDR-with-ITR**: Vector integration events that contain AAV inverted terminal repeat (ITR) sequences (>10bp coverage) but lack proper HDR template integration. These represent partial or imprecise vector integration events.
+- **Non-HDR-without-ITR**: Vector integration events that show evidence of AAV vector sequences without ITR content, but lack proper HDR template integration (<98% identity) or have truncated HDR integration (<99% transgene length). These represent imprecise integration events.
+
+#### CRISPR-Induced Variants
+- **DEL-small**: Small deletions (<50bp) at the target site, typically resulting from imprecise non-homologous end joining (NHEJ) repair of CRISPR-induced double strand breaks.
+- **DEL-large**: Large deletions (≥50bp) at the target site, representing more extensive NHEJ-mediated repair or loss of genomic material between multiple cut sites.
+- **INS-small**: Small insertions (<50bp) at the target site, usually resulting from NHEJ repair mechanisms that insert random nucleotides during double strand break repair.
+- **INS-large**: Large insertions (≥50bp) at the target site that do not match the provided AAV vector sequence. These may result from integration of contaminating DNA, complex rearrangements, or large NHEJ-mediated insertions.
+- **INV**: Inversions detected at the target site, where a genomic segment has been reversed in orientation, typically resulting from NHEJ repair between two CRISPR cut sites.
+- **DUP**: Duplications detected at the target site, where genomic segments have been duplicated, often arising from complex NHEJ repair mechanisms.
+
+#### Unresolved Classifications
+- **Unclassified**: Reads that could not be confidently classified into any of the above categories. These include unmapped reads, reads with complex alignment patterns, and reads not spanning the cleavage site.
 
 ## How to run pipeline
 

@@ -1,0 +1,12 @@
+trac_del_small.c8802586-db3f-55e5-f266-d841ea9c494d	DEL-small	15
+trac_ins_large.492fe800-e2e4-a44d-34b4-a67217b09fa2	INS-large	100
+trac_del_large.353c77db-e7d8-6618-96c3-245b570d959a	DEL-large	177
+trac_snp.ab8ea002-375c-3094-00c0-d4bb6dac36e5	Unmodified-with-SNP	1
+trac_ins_small.21b9f3b3-2880-6e76-ea01-aac00fcb147c	INS-small	13
+trac_wt.ba9b48cc-cc2d-8467-ef97-923069a0bbcc	Unmodified	
+trac_cd19_hdr.98e4b6a5-b21a-e5c9-4b27-f5c9ebc9beb9	HDR-CD19	1907
+trac_cd19_truncated_hdr.fee4c597-45ae-353d-6e29-298986f4d0c2	Non-HDR-without-ITR-CD19	475
+trac_cd19_itr_oneside.28eb14a3-e3b7-9b88-566d-7b7a1da0cb53	Non-HDR-with-ITR-CD19	2061
+trac_cd19_itr.bec45972-caa8-719b-b262-db8b5411807b	Non-HDR-with-ITR-CD19	2198
+trac_cd22_hdr.78c8689b-16c0-0f81-c2b1-4e3d50ac3ff8	HDR-CD22	3274
+trac_cd22_itr.7ad3b248-b864-f2bd-2b0a-3884a6239e87	Non-HDR-with-ITR-CD22	3558

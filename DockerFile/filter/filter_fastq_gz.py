@@ -38,6 +38,8 @@ def get_args() -> Args:
                         help="forward primer sequence")
     parser.add_argument("-r", "--reve", type=str, required=False, default=None,
                         help="reverse primer sequence")
+    parser.add_argument("--primer_check_length", type=int, required=False, default=50,
+                        help="Length in base pairs from each end of the read to search for PCR primer sequences")
     parser.add_argument("-q", "--min_qual", type=float, default=30,
                         help="minimal average read base quality")
     args = parser.parse_args()
@@ -60,7 +62,8 @@ def main() -> None:
                    args.sample,
                 args.forw,
                 revcom(args.reve),
-                args.min_qual)
+                args.min_qual,
+                args.primer_check_length)
 
 
     create_combined_histograms(readlen_orig, readqual_orig, args.sample+"_original")
@@ -101,11 +104,11 @@ def is_subsequence(seq, subseq):
     return False
 
 
-def primer_in(readseq:str, primerf:str, primerr:str, revprimerf:str, revprimerr:str) -> bool:
+def primer_in(readseq:str, primerf:str, primerr:str, revprimerf:str, revprimerr:str, primer_check_length:int) -> bool:
     """Test if first or last 20 base nucleotides matched to either forward or reverse primers.
     """
-    head = readseq[:50]
-    tail = readseq[-50:]
+    head = readseq[:primer_check_length]
+    tail = readseq[0-primer_check_length:]
 
     if is_subsequence(head,primerf) and is_subsequence(tail,primerr):
         return True
@@ -114,7 +117,7 @@ def primer_in(readseq:str, primerf:str, primerr:str, revprimerf:str, revprimerr:
     return False
 
 
-def filter_fastqgz(fastqpath:str, output_dir:str, sample:str, primer_f:str, primer_r:str, qual=30) -> None:
+def filter_fastqgz(fastqpath:str, output_dir:str, sample:str, primer_f:str, primer_r:str, qual:float, primer_check_length:int) -> None:
     """
     Filter a FASTQ file based on quality, forward, and reverse primer matches.
     Args:
@@ -134,7 +137,7 @@ def filter_fastqgz(fastqpath:str, output_dir:str, sample:str, primer_f:str, prim
     output_fq_path = os.path.join(output_dir, output_file_name)
     rev_primer_f = revcom(primer_f)
     rev_primer_r = revcom(primer_r)
-    cut_off_qual = qual if qual else 30
+    cut_off_qual = qual
 
     low_qual = 0
     fulllen = 0
@@ -164,7 +167,8 @@ def filter_fastqgz(fastqpath:str, output_dir:str, sample:str, primer_f:str, prim
                              primer_f,
                              primer_r,
                              rev_primer_f,
-                             rev_primer_r):
+                             rev_primer_r,
+                             primer_check_length):
                     SeqIO.write(rec, out_f, "fastq")
                     fulllen += 1
                     readlen_filtered += [len(seq)]
