@@ -1,0 +1,13 @@
+fastqfile:
+  class: File
+  path: example_input.test_sample.fastq
+
+reffile:
+  class: File
+  path: example_ref.reference_trac.fa
+
+config:
+  class: File
+  path: example_ref.config_trac.txt
+
+sample_name: "test_sample"
