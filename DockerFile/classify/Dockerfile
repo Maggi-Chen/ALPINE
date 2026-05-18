@@ -18,7 +18,7 @@ RUN make install
 
 RUN mkdir /opt/blast && \
     cd /opt/blast && \
-    wget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/ncbi-blast-2.16.0+-x64-linux.tar.gz && \
+    wget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.16.0/ncbi-blast-2.16.0+-x64-linux.tar.gz && \
     tar -xvzf ncbi-blast-2.16.0+-x64-linux.tar.gz 
 WORKDIR /opt/blast
 ENV PATH="/opt/blast/ncbi-blast-2.16.0+/bin:${PATH}"
@@ -42,13 +42,32 @@ RUN apt-get update && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Build latest minimap2 (for classify_read.py)
 WORKDIR /opt/minimap2
 RUN make
 ENV PATH="$PATH:/opt/minimap2/"
 
+# Install minimap2 v2.16 specifically for patcher.py
+# (newer versions soft-clip large deletions instead of showing them in CIGAR)
+WORKDIR /opt
+RUN wget https://github.com/lh3/minimap2/archive/refs/tags/v2.16.tar.gz && \
+    tar -xzf v2.16.tar.gz && \
+    cd minimap2-2.16 && \
+    make && \
+    mkdir -p /opt/minimap2-2.16 && \
+    cd /opt && \
+    rm v2.16.tar.gz
+
 WORKDIR /opt
 RUN chmod 777 /opt/classify_read.py
 
+# Verify minimap2 versions
+RUN echo "Checking minimap2 versions:" && \
+    echo "  Latest (for classify_read.py):" && /opt/minimap2/minimap2 --version && \
+    echo "  v2.16 (for patcher.py):" && /opt/minimap2-2.16/minimap2 --version
+
+# Test that scripts load correctly
 RUN python classify_read.py --help
+RUN python patcher.py --help
 
 

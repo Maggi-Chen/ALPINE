@@ -1,5 +1,14 @@
 import argparse
+import sys
+import os
+
+# Add shared module path for imports (handles both local and Docker environments)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+sys.path.insert(0, '/opt')  # Docker environment path
+
 import plot_pie_charts
+from column_order import sort_columns
+
 
 def read_inputs(table_file):
     readtag = open(table_file,'r').read().split('\n')[:-1]
@@ -34,29 +43,25 @@ def main():
         (sample, read_count, header) = read_inputs(input_file)
         allcounts[sample] = read_count
 
-    # Get all read tags for all samples
-    alltag=[]
-    for c in header:
-        alltag+=[c]
+    # Collect all unique tags from all samples
+    all_tags = set()
     for sample in allcounts:
-        for tag in allcounts[sample]:
-            if tag not in alltag:
-                alltag += [tag]
+        all_tags.update(allcounts[sample].keys())
+
+    # Sort columns in fixed order and add missing exact-match categories
+    sorted_tags = sort_columns(all_tags)
 
     # Open output file and write header line
-    f=open(args.output+'_read_classification.txt','w')
-    f.write('#Sample')
-    for tag in alltag:
-        f.write('\t'+tag)
-    f.write('\n')
+    f = open(args.output + '_read_classification.txt', 'w')
+    f.write('#Sample\t' + '\t'.join(sorted_tags) + '\n')
 
     for sample in allcounts:
         f.write(sample)
-        for tag in alltag:
+        for tag in sorted_tags:
             if tag not in allcounts[sample]:
                 f.write('\t0')
             else:
-                f.write('\t'+str(allcounts[sample][tag]))
+                f.write('\t' + str(allcounts[sample][tag]))
         f.write('\n')
     f.close()
 

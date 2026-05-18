@@ -12,36 +12,8 @@ from typing import NamedTuple, Optional
 from utils.verify_and_update_hdr_vartag import verify_update_hdr_tag
 from utils.verify_and_update_itr_vartag import verify_itr_seq
 from utils import debreak_detect
-
-
-def read_aav_config(config_path):
-    
-    """
-    Read in AAV vector config file and return a directory of AAV info.
-    config file should contain 5 columns:
-    AAV_ID, AAV_name, left_itr_end_pos, right_itr_begin_pos, insertstart, insert_end
-    """
-
-    allvector = open(config_path,'r').read().split('\n')
-    allvector = [c for c in allvector if c!='']
-    header=allvector[0][1:].split('\t')
-    allvector = [c for c in allvector if c[0]!="#"] # Remove header lines if there is any
-
-    aavinfo={}
-    for line in allvector:
-        line=line.split('\t')
-        if line[0] not in aavinfo:
-            aavinfo[line[0]]={}
-        aavinfo[line[0]][line[1]]={}
-        for i in range(len(header)-2):
-            if header[i+2]=='Ref_Type':
-                aavinfo[line[0]][line[1]][header[i+2]]=line[i+2]
-            else:
-                if line[i+2]!='NA':
-                    aavinfo[line[0]][line[1]][header[i+2]]=int(line[i+2])
-                else:
-                    aavinfo[line[0]][line[1]][header[i+2]]=None
-    return aavinfo
+from utils.config_utils import read_aav_config
+from patcher import rescue_unclassified_reads
 
 
 def process_read_targetsite(allread, 
@@ -50,10 +22,24 @@ def process_read_targetsite(allread,
                             filename,
                             read_tag,
                             allindel,
-                            covering_bp):
+                            covering_bp,
+                            variant_window=20):
     """
     Detect structural variant events within target regions from sequence alignment records.
-    combine read-level and segment-level analyses to identify SV and small variants.
+    combine read-level and segment-level analyses to identify SV and stores info
+        1. processing reads: processes sequence alignment records, filters out secondary alignments, keeps track of read name, identifies reads within target region(+-) 10bp,
+            parsers cigar to identify indels of each read, stores detected SV in different lists `indelinfo`, `segmentreads`, `goodindel`.
+        2. segment-level detection: use `segmentdeletion_tumor`, detect SV and stored in the `segmentsv` and valid SV are added to the `goodsegment` list
+        3. output txt file: writes detected SV info to a file named `all_indel_readname.txt` including `read_tag`, `allindel`, `covering_bp`
+    Parameter
+        allread: pysam alignment object
+        chrom: target chromosome name, str
+        pos: target genomic position, int
+        vector_name: not been used
+        five_prime_itr_end: not been used
+        three_prime_itr_start: not been used
+        filename: filename name, str
+
     """
     f = open('temp_'+filename+'_insseq.fa','a')
     segmentreads = {}
@@ -82,13 +68,13 @@ def process_read_targetsite(allread,
             insid = 1
             for sv in indelinfo:
                 if 'D-cigar' in sv:
-                    if min(pos+20, sv[1]+sv[2])-max(sv[1], pos-20) > 0:
+                    if min(pos+variant_window, sv[1]+sv[2])-max(sv[1], pos-variant_window) > 0:
                         goodindel += [sv]
                 if 'Unmodified-with-SNP' in sv:
-                    if pos-20 <= sv[1] <= pos+20:
+                    if pos-variant_window <= sv[1] <= pos+variant_window:
                         goodindel += [sv]
                 if 'I-cigar' in sv:
-                    if pos-20 < sv[1] < pos+20:
+                    if pos-variant_window < sv[1] < pos+variant_window:
                         goodindel += [sv]
                         if sv[2] > 50:
                             insertseq = read.query_sequence[sv[4]:sv[4]+sv[2]]
@@ -226,7 +212,8 @@ def process_read_aav_itr(aavsite,
                      aavinfo,
                      aavlen,
                      itrlen,
-                     filename):
+                     filename,
+                     min_itr):
 
     five_prime_itr_start=aavinfo[aav_id][ref_name]['ITR1_start']
     five_prime_itr_end=aavinfo[aav_id][ref_name]['ITR1_end']
@@ -244,7 +231,7 @@ def process_read_aav_itr(aavsite,
         align_tuple=read.get_aligned_pairs()
         (itr1,gene,itr2) = get_itr_hdr_length(align_tuple,five_prime_itr_start,five_prime_itr_end,three_prime_itr_start,three_prime_itr_end,gene_start,gene_end)
 
-        if itr1>10 or itr2>10:
+        if itr1>min_itr or itr2>min_itr:
             if read.query_name not in aav_tag:
                 aav_tag[read.query_name] = ['ITR_integration-'+aav_id]
             elif 'ITR_integration-'+aav_id not in aav_tag[read.query_name]:
@@ -270,7 +257,7 @@ def process_read_aav_itr(aavsite,
     return (aav_tag, aavlen, itrlen)
 
 
-def realign_to_wt(filename,wtchrom,wtpos,read_tag,allindel,covering_bp,reffile):
+def realign_to_wt(filename,wtchrom,wtpos,read_tag,allindel,covering_bp,reffile,data_type,variant_window):
     refseq=open(reffile,'r').read().split('>')[1:]
     for chrom in refseq:
         if wtchrom==chrom.split('\n')[0].split(' ')[0]:
@@ -278,7 +265,8 @@ def realign_to_wt(filename,wtchrom,wtpos,read_tag,allindel,covering_bp,reffile):
             f.write('>'+wtchrom+'\n'+''.join(chrom.split('\n')[1:])+'\n')
             f.close()
             break
-    os.system('minimap2 -ax map-hifi -t 8 --secondary=no temp_'+filename+'_wtref.fa temp_' +
+    preset = "map-ont" if data_type == "nanopore" else "map-hifi"
+    os.system('minimap2 -ax '+preset+' -t 8 --secondary=no temp_'+filename+'_wtref.fa temp_' +
               filename+'_realignWT.fa |samtools sort -o temp_'+filename+'_realignWT.bam')
     os.system('samtools index temp_'+filename+'_realignWT.bam')
 
@@ -290,7 +278,8 @@ def realign_to_wt(filename,wtchrom,wtpos,read_tag,allindel,covering_bp,reffile):
                             filename,
                             read_tag,
                             allindel,
-                            covering_bp)
+                            covering_bp,
+                            variant_window)
     return (read_tag, allindel, covering_bp)
 
 
@@ -298,7 +287,7 @@ def svsize(a):  # sorting a list based on second element
     return a[2]
 
 
-def find_aav_insertion(samname,aavinfo,aavlen,aav_tag,itrlen):
+def find_aav_insertion(samname,aavinfo,aavlen,aav_tag,itrlen,min_itr):
     try:
         f = pysam.AlignmentFile(samname, 'r')
     except:
@@ -327,7 +316,7 @@ def find_aav_insertion(samname,aavinfo,aavlen,aav_tag,itrlen):
                                         aavinfo[aav_id][read.reference_name]['gene_start'],
                                         aavinfo[aav_id][read.reference_name]['gene_end'])
 
-        if itr1>10 or itr2>10:
+        if itr1>min_itr or itr2>min_itr:
             fullaav+=1
             if readname not in aav_tag:
                 aav_tag[readname] = ['ITR_integration-'+aav_id]
@@ -354,6 +343,17 @@ def find_aav_insertion(samname,aavinfo,aavlen,aav_tag,itrlen):
     print('rescue ins aav: ', goodaav, fullaav)
     return (aav_tag, aavlen, itrlen)
 
+
+def reverse_complement(sequence):
+    revcom_seq = ''
+    basepair = {"A": "T",
+                "T": "A",
+                "C": "G",
+                "G": "C",}
+    for base in sequence:
+        revcom_seq = basepair[base] + revcom_seq
+    return revcom_seq
+
  
 def find_variant_clip(temp_unmodified, 
                       bampath, 
@@ -364,7 +364,9 @@ def find_variant_clip(temp_unmodified,
                       aav_tag, 
                       aavinfo,
                       aavlen,
-                      itrlen):
+                      itrlen,
+                      data_type,
+                      min_itr):
     vector_names={}
     for aav_id in aavinfo:
         for refname in aavinfo[aav_id]:
@@ -379,20 +381,31 @@ def find_variant_clip(temp_unmodified,
         if read.query_name not in temp_unmodified \
                 or read.flag > 16 or read.has_tag('SA'):
             continue
+        flag = read.flag
         readcigar = read.cigartuples
         ifclip = False
         cigarinfo = [0, 0, 0]
         if readcigar[0][0] == 4:
-            cigarinfo[0] = readcigar[0][1]
             if readcigar[0][1] > 100:
-                tempfile.write('>'+read.query_name+'_leftclip\n' +
+                if flag == 0:
+                    cigarinfo[0] = readcigar[0][1]
+                    tempfile.write('>'+read.query_name+'_leftclip\n' +
                                read.query_sequence[:readcigar[0][1]]+'\n')
+                else:
+                    cigarinfo[2] = readcigar[0][1]
+                    tempfile.write('>'+read.query_name+'_leftclip\n' +
+                               reverse_complement(read.query_sequence[:readcigar[0][1]])+'\n')
                 ifclip = True
         if readcigar[-1][0] == 4:
-            cigarinfo[2] = readcigar[-1][1]
             if readcigar[-1][1] > 100:
-                tempfile.write('>'+read.query_name+'_rightclip\n' +
-                               read.query_sequence[-readcigar[0][1]:]+'\n')
+                if flag == 0:
+                    cigarinfo[2] = readcigar[-1][1]
+                    tempfile.write('>'+read.query_name+'_rightclip\n' +
+                               read.query_sequence[-readcigar[-1][1]:]+'\n')
+                else:
+                    cigarinfo[0] = readcigar[-1][1]
+                    tempfile.write('>'+read.query_name+'_rightclip\n' +
+                               reverse_complement(read.query_sequence[-readcigar[-1][1]:])+'\n')
                 ifclip = True
         cigarinfo[1] = read.query_alignment_length
         if ifclip:
@@ -401,7 +414,8 @@ def find_variant_clip(temp_unmodified,
     tempfile.close()
 
     # align clip sequence & detect variant or aav integration
-    os.system('minimap2 -ax map-hifi -t 8 --secondary=no ' + fasta + ' temp_' +
+    preset = "map-ont" if data_type == "nanopore" else "map-hifi"
+    os.system('minimap2 -ax '+preset+' -t 8 --secondary=no ' + fasta + ' temp_' +
               filename+'_clippedseq.fa > temp_'+filename+'_clippedseq.sam')
     try:
         f = pysam.AlignmentFile('temp_'+filename+'_clippedseq.sam', 'r')
@@ -414,6 +428,9 @@ def find_variant_clip(temp_unmodified,
     fullaav = []
     variant = []
     svinfo = {}
+    wtalignments=[]
+
+    clip_wtfile = open('temp_'+filename+'_clippedseq_forceWT.fa','w')
     for read in allread:
         readname = read.query_name.split('_rightclip')[0].split('_leftclip')[0]
         if read.flag == 4:
@@ -423,7 +440,7 @@ def find_variant_clip(temp_unmodified,
             readtag[readname] = 'Unmodify'
             continue
         # contain aav sequence
-        if read.reference_name in vector_names:
+        if read.reference_name in vector_names and read.reference_name !=chrom:
             aav_id = vector_names[read.reference_name]
             align_tuple=read.get_aligned_pairs()
             (itr1,gene,itr2) = get_itr_hdr_length(align_tuple,
@@ -434,7 +451,7 @@ def find_variant_clip(temp_unmodified,
                                         aavinfo[aav_id][read.reference_name]['gene_start'],
                                         aavinfo[aav_id][read.reference_name]['gene_end'])
 
-            if itr1>10 or itr2>10:
+            if itr1>min_itr or itr2>min_itr:
                 if readname not in aav_tag:
                     aav_tag[readname] = ['ITR_integration-'+aav_id]
                 elif 'ITR_integration-'+aav_id not in aav_tag[readname]:
@@ -444,7 +461,7 @@ def find_variant_clip(temp_unmodified,
                     itrlen[readname]={}
                 if aav_id not in itrlen[readname] or itrlen[readname][aav_id] < aavinslen:
                     itrlen[readname][aav_id] = aavinslen
-            else:
+            elif gene>10:
                 if readname not in aav_tag:
                     aav_tag[readname] = ['HDR-'+aav_id]
                 elif 'HDR-'+aav_id not in aav_tag[readname]:
@@ -455,14 +472,31 @@ def find_variant_clip(temp_unmodified,
                     aavlen[readname]={}
                 if aav_id not in aavlen[readname]  or aavlen[readname][aav_id] < aavinslen:
                     aavlen[readname][aav_id] = aavinslen
+            else:
+                if read.flag==0:
+                    clip_wtfile.write('>' + read.query_name + '\n' + read.query_sequence + '\n')
+                elif read.flag==16:
+                    clip_wtfile.write('>' + read.query_name + '\n' + reverse_complement(read.query_sequence) + '\n')
         # same chrom
+        if read.reference_name == chrom:
+            wtalignments += [read]
+
+    clip_wtfile.close()
+    # Force align to WT reference
+    preset = "map-ont" if data_type == "nanopore" else "map-hifi"
+    os.system('minimap2 -ax '+preset+' -t 8 --secondary=no temp_'+filename+'_wtref.fa temp_' + filename +
+                '_clippedseq_forceWT.fa > temp_'+filename+'_clippedseq_forceWT.sam')
+    clip_forcewt = pysam.AlignmentFile('temp_'+filename+'_clippedseq_forceWT.sam', 'r')
+    allread_forceWT = clip_forcewt.fetch()
+
+    for read in allread_forceWT:
+        wtalignments += [read]
+
+    for read in wtalignments:
+        readname = read.query_name.split('_rightclip')[0].split('_leftclip')[0]
         if read.reference_name == chrom:
             prime = primaryalign[readname][0]
             cigarinfo = [0, 0, 0]
-            cigarinfo[0] = read.cigartuples[0][1] if read.cigartuples[0][0] in [
-                4, 5] else 0
-            cigarinfo[0] = read.cigartuples[0][1] if read.cigartuples[0][0] in [
-                4, 5] else 0
             if read.is_reverse:
                 flag = 2064
                 cigarinfo[2] = read.cigartuples[0][1] if read.cigartuples[0][0] in [
@@ -476,14 +510,15 @@ def find_variant_clip(temp_unmodified,
             cigarinfo[1] = read.query_alignment_length
             if 'leftclip' in read.query_name:
                 cigarinfo[2] += sum(prime[5])-sum(cigarinfo)
+            else:
+                cigarinfo[0] += sum(prime[5])-sum(cigarinfo)
             primaryalign[readname] += [[readname, flag, chrom, read.reference_start,
                                         read.reference_end, cigarinfo, read.mapping_quality]]
-
 
     for readname in primaryalign:
         if len(primaryalign[readname]) > 1 and (readname not in readtag or readtag[readname] not in ['FULL', 'HDR']):
             readsv = debreak_detect.segmentdeletion_tumor(
-                primaryalign[readname], 50, 100000)
+                primaryalign[readname], 50, 100000, min_alignment_len=50)
             goodsv = []
             for c in readsv:
                 c = c.split('\t')
@@ -493,6 +528,7 @@ def find_variant_clip(temp_unmodified,
                 continue
             svinfo[readname] = goodsv
             readtag[readname] = 'SV'
+
 
     for readname in readtag:
         if readtag[readname] == 'HDR':
@@ -584,15 +620,19 @@ def assign_read(read_tag,
                 pos, covering_bp,
                 aavlen, 
                 itrlen,
-                full_hdr_cutoff):
+                full_hdr_cutoff,
+                data_type,
+                min_itr):
     # realign inserted seq from INS calls - find aav sequence
-    os.system('minimap2 -ax map-hifi -t 8 --secondary=no ' + fasta + ' temp_' +
-              filename+'_insseq.fa > temp_'+filename+'_insseq.sam')
+    preset = "map-ont" if data_type == "nanopore" else "map-hifi"
+    os.system(f'minimap2 -ax {preset} -t 8 --secondary=no {fasta} temp_{filename}_insseq.fa > temp_{filename}_insseq.sam')
+
     (aav_tag, aavlen, itrlen) = find_aav_insertion('temp_'+filename+'_insseq.sam',
                                                     aavinfo,
                                                     aavlen,
                                                     aav_tag,
-                                                    itrlen)
+                                                    itrlen,
+                                                    min_itr)
 
     # realign unmapped clip sequence from Unmodified reads - find aav sequence
     temp_unmodified = []
@@ -609,7 +649,9 @@ def assign_read(read_tag,
                                                                       aav_tag,
                                                                       aavinfo,
                                                                       aavlen,
-                                                                      itrlen)
+                                                                      itrlen,
+                                                                      data_type,
+                                                                      min_itr)
     variant = set(variant)
 
     (read_tag, final_aavlen) = merge_aav_tag(read_tag, aavinfo, aav_tag, aavlen, itrlen, full_hdr_cutoff)
@@ -708,7 +750,10 @@ def classify_bam(filename,
                  bampath, 
                  fasta, 
                  aavinfo,
-                 full_hdr_cutoff):
+                 full_hdr_cutoff,
+                 data_type,
+                 variant_window,
+                 min_itr):
     f = pysam.AlignmentFile(bampath, 'rb')
     read_tag={}
     aavlen={}
@@ -731,7 +776,8 @@ def classify_bam(filename,
                             filename,
                             read_tag,
                             allindel,
-                            covering_bp)
+                            covering_bp,
+                            variant_window)
             elif aavinfo[aav][ref_name]['Ref_Type'] == "ITR":
                 (aav_tag, aavlen, itrlen) = process_read_aav_itr(alignment, 
                                               aav_tag,
@@ -740,7 +786,8 @@ def classify_bam(filename,
                                               aavinfo,
                                               aavlen,
                                               itrlen,
-                                              filename)
+                                              filename,
+                                              min_itr)
             else:
                 (aav_tag, aavlen, itrlen) = process_read_aav_hdr(alignment,
                                               aav_tag,
@@ -757,7 +804,9 @@ def classify_bam(filename,
                                             read_tag,
                                             allindel,
                                             covering_bp,
-                                            fasta)
+                                            fasta,
+                                            data_type,
+                                            variant_window)
 
     read_tag = assign_read(read_tag,
                            aav_tag,
@@ -771,7 +820,9 @@ def classify_bam(filename,
                            covering_bp,
                            aavlen,
                            itrlen,
-                           full_hdr_cutoff)
+                           full_hdr_cutoff,
+                           data_type,
+                           min_itr)
 
 
 
@@ -788,15 +839,17 @@ class Args(NamedTuple):
     right_itr_start_pos: int
     ins_start: int
     ins_end: int
-    full_hdr_cutoff: int
-    five_prime_HA_arm_seq: str
-    three_prime_HA_arm_seq: str
-    ha_match_ratio: Optional[float] = 0.98
+    full_hdr_cutoff: float
+    five_prime_HA_arm_seq: Optional[str] = None
+    three_prime_HA_arm_seq: Optional[str] = None
+    ha_match_ratio: Optional[float] = None
     left_itr_seq: Optional[str] = None
     right_itr_seq: Optional[str] = None
     seed_size: Optional[int] = 15
     perc_identity: Optional[int] = 80
-
+    data_type: Optional[str] = "pacbio-hifi"
+    variant_window: Optional[int] = 20
+    min_itr_length: Optional[int] = 10
 
 def get_args() -> Args:
     """ Get command-line arguments """
@@ -815,20 +868,27 @@ def get_args() -> Args:
                         help="reference genome fa file including vectors")
     parser.add_argument("--config", type=str, required=True,
                         help="config file for AAV vector")
-    parser.add_argument("--full_hdr_cutoff", type=float, required=False, default=0.99,
-                        help="length cutoff (percentage) for full-length aav integration")
-    parser.add_argument("--five_prime_HA_arm_seq", type=str, required=True,
+    parser.add_argument("--full_hdr_cutoff", type=float, required=False, default=None,
+                        help="length cutoff (percentage) for full-length aav integration. Default: 0.99 for PacBio HiFi, 0.95 for Nanopore")
+    parser.add_argument("--five_prime_HA_arm_seq", type=str, required=False, default=None,
                         help="five prime HA arm sequence")
-    parser.add_argument("--three_prime_HA_arm_seq", type=str, required=True,
+    parser.add_argument("--three_prime_HA_arm_seq", type=str, required=False, default=None,
                         help="three prime HA arm sequence")
     parser.add_argument("--left_itr_seq",
                         help="left ITR sequence")
     parser.add_argument("--right_itr_seq",
                         help="right ITR sequence")
-    parser.add_argument("--ha_match_ratio", type=float,
-                        default=0.98, help="HA sequence match ratio")
+    parser.add_argument("--ha_match_ratio", type=float, default=None,
+                        help="HA sequence match ratio. Default: 0.98 for PacBio HiFi, 0.90 for Nanopore")
     parser.add_argument("--seed_size", default=15, help="word size for initial sequence match")
     parser.add_argument("--perc_identity", default=80, help="percentage identity for sequence alignment")
+    parser.add_argument("--data_type",  type=str, default="pacbio-hifi",
+                        choices=["pacbio-hifi", "nanopore"],
+                        help="Sequencing platform type (pacbio-hifi, nanopore)")
+    parser.add_argument("--variant_window", type=int, default=20,
+                        help="Window size for variant detection ±bp (default: 20)")
+    parser.add_argument("--min_itr_length", type=int, default=10,
+                        help="Minimal length of ITR seqeucne for Non-HDR-with-ITR (default: 10).")
     return parser.parse_args()
 
 
@@ -845,15 +905,23 @@ def main() -> None:
     right_ha_seq = args.three_prime_HA_arm_seq
     left_itr_seq = args.left_itr_seq
     right_itr_seq = args.right_itr_seq
-    ha_match_ratio = args.ha_match_ratio
+    data_type = args.data_type
     seed_size = args.seed_size
     perc_identity = args.perc_identity
+    variant_window = args.variant_window
+    min_itr = args.min_itr_length
+    if args.ha_match_ratio:
+        ha_match_ratio = args.ha_match_ratio
+    else:
+        ha_match_ratio = 0.90 if data_type == "nanopore" else 0.98
 
-    
+    if args.full_hdr_cutoff:
+        full_hdr_cutoff = args.full_hdr_cutoff
+    else:
+        full_hdr_cutoff = 0.95 if data_type == "nanopore" else 0.99
+
     readname_file = f"temp_readname_{filename}.txt"
-
     aavinfo = read_aav_config(args.config)
-    
 
     # Get current date and time
     current_datetime = datetime.now()
@@ -868,12 +936,19 @@ def main() -> None:
                  bampath,
                  fasta,
                  aavinfo,
-                 full_hdr_cutoff)
-    
-    verify_update_hdr_tag(readname_file, fastq, left_ha_seq,
-                          right_ha_seq, f'{filename}_ValidatedHA', 'HDR', ha_match_ratio)
-    
-    if left_itr_seq is not None and right_itr_seq is not None:
+                 full_hdr_cutoff,
+                 data_type,
+                 variant_window,
+                 min_itr)
+
+    if left_ha_seq is not None and right_ha_seq and len(left_ha_seq.strip())>0 and len(right_ha_seq.strip())>0:
+        verify_update_hdr_tag(readname_file, fastq, left_ha_seq.strip(),
+                              right_ha_seq.strip(), f'{filename}_ValidatedHA', 'HDR', ha_match_ratio)
+    else:
+        print("# No HA sequences provided. Skipping HA sequence validation.")
+        os.rename(readname_file, f'readname_{filename}_ValidatedHA.txt')
+
+    if left_itr_seq and right_itr_seq and len(left_itr_seq.strip())>0 and len(right_itr_seq.strip())>0:
         print("# Verifying ITR sequences ...")
         verify_itr_seq(f'readname_{filename}_ValidatedHA.txt', fastq, filename, left_itr_seq,
                    right_itr_seq, seed_size=seed_size, percent_identity=perc_identity)
@@ -881,7 +956,26 @@ def main() -> None:
         print("# No ITR sequences provided. Skipping ITR sequence verification.")
         os.rename(f'readname_{filename}_ValidatedHA.txt', f'readname_{filename}.txt')
 
-    
+    # Rescue false negatives: re-analyze Unclassified reads to detect large deletions
+    # This step realigns Unclassified reads to WT-only reference using minimap2 v2.16
+    # which shows large deletions in CIGAR (newer versions soft-clip them)
+    final_readname_file = f'readname_{filename}.txt'
+    print("# Rescuing false negatives from Unclassified reads...")
+    try:
+        patcher_stats = rescue_unclassified_reads(
+            readname_file=final_readname_file,
+            bam_file=bampath,
+            ref_fasta=fasta,
+            config_file=args.config,
+            verbose=True
+        )
+        print(f"# Patcher rescued {patcher_stats['rescued']} reads "
+              f"(Unclassified -> DEL-large)")
+    except (FileNotFoundError, PermissionError) as e:
+        # If patcher tools (minimap2 v2.16) not available, warn but continue
+        print(f"# WARNING: Patcher skipped - {e}")
+        print("#   To enable patcher, install minimap2 v2.16 and set PATCHER_MINIMAP2_PATH")
+
     end_time = time.time()
     print(f'# {filename}: Done. Total elapsed time: \
           {(end_time - start_time)/60:.1f} minutes.')
