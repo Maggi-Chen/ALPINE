@@ -1,7 +1,3 @@
-<!-- confluence-page-id: 490111950 -->
-<!-- confluence-space-key: KSR -->
-<!-- generated-by: Do not edit. This page was auto-generated from the pipeline repo. -->
-
 # ALPINE: AAV integration evaluation using targeted long-read sequencing data
 
 This repo represents ALPINE pipeline for AAV integration evaluation using targeted long-read
@@ -26,6 +22,7 @@ on-target AAV integration evaluation.
   - [Sample name](#sample-name)
   - [Optional inputs](#optional-inputs)
   - [Inputs for merge classification table step](#inputs-for-merge-classification-table-step)
+- [Test Data and Examples](#test-data-and-examples)
 - [Outputs](#outputs)
   - [Per-sample outputs](#per-sample-outputs)
     - [Filtered FASTQ](#filtered-fastq)
@@ -269,6 +266,31 @@ Inputs for merge classification table step are the single-sample read classifica
 containing all samples will be generated for easier comparison and plot generation.
 
 For detailed explanations of all output classification categories, see the [ALPINE Output Classification Categories](#alpine-output-classification-categories) section.
+
+## Test Data and Examples
+
+The `testdata/` folder contains example input and output files to help users understand the expected file formats and test the ALPINE pipeline:
+
+### Example Input Files
+- **`example_input.test_sample.fastq`** - Sample FASTQ file with long-read sequencing data
+- **`example_ref.reference_trac.fa`** - Reference sequence file containing WT, HDR, and ITR sequences for TRAC locus
+- **`example_ref.config_trac.txt`** - Vector configuration file specifying AAV vector details and genomic coordinates
+- **`example_input.yaml`** - CWL workflow input parameter file showing how to configure pipeline runs
+
+### Example Output Files
+- **`example_output.readname_test_sample.txt`** - Per-read classification results with read names, categories, and variant sizes
+- **`example_output.test_sample_read_classification.txt`** - Summary count table showing number of reads in each classification category
+
+### Usage
+These test data files serve multiple purposes:
+- **Format templates**: Use as examples for preparing your own input files with correct formatting
+- **Pipeline testing**: Run ALPINE with these files to verify proper installation and functionality
+- **Parameter reference**: The YAML file demonstrates how to specify optional parameters for different experimental setups
+
+To run ALPINE with the test data:
+```bash
+cwl-runner CWL/aav_per_sample_workflow.cwl testdata/example_input.yaml
+```
 
 ## Outputs
 
