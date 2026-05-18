@@ -66,6 +66,14 @@ def get_default_parameters(args):
         parameters["seed_size"] = args.seed_size
     if args.perc_identity:
         parameters["perc_identity"] = args.perc_identity
+    if args.data_type:
+        parameters["data_type"] = args.data_type
+    if args.variant_window:
+        parameters["variant_window"] = args.variant_window
+    if args.primer_check_length:
+        parameters["primer_check_length"] = args.primer_check_length
+    if args.min_itr_length:
+        parameters["min_itr_length"] = args.min_itr_length
     return parameters
 
 
@@ -386,14 +394,14 @@ def do_work(args, platform, project, launcher_task):
         args.reffile_id = platform.get_task_input(launcher_task, "reffile")
     else:
         # upload input files to project
-        args.config_id = platform.upload_file_to_project(
+        args.config_id = platform.upload_file(
             args.config,
             project,
             "/launcher_inputs/",
             os.path.basename(args.config),
             overwrite=True,
         )
-        args.reffile_id = platform.upload_file_to_project(
+        args.reffile_id = platform.upload_file(
             args.reffile,
             project,
             "/launcher_inputs/",
@@ -480,8 +488,8 @@ def parse_arguments(argv):
     parser.add_argument("--config", help="Transgene config file", required=True)
     parser.add_argument("--truncated_cutoff", help="Truncated HDR/ITR Threshold", type=float,
         required=False, default=0.99)
-    parser.add_argument("--five_prime_HA_seq", help="5' Homology arm sequence", required=True)
-    parser.add_argument("--three_prime_HA_seq", help="3' Homology arm sequence", required=True)
+    parser.add_argument("--five_prime_HA_seq", help="5' Homology arm sequence", required=False)
+    parser.add_argument("--three_prime_HA_seq", help="3' Homology arm sequence", required=False)
     parser.add_argument("--HA_match_ratio", type=float,
         help="Homology arm sequence match ratio", required=False, default=0.98
     )
@@ -493,6 +501,15 @@ def parse_arguments(argv):
     parser.add_argument("--seed_size", type=int, help="Seed size for blastn", required=False)
     parser.add_argument("--perc_identity", type=int,
         help="Min percent identity to match a ITR sequence for blastn", required=False)
+    parser.add_argument("--data_type",  type=str, required=False,
+                        choices=["pacbio-hifi", "nanopore"],
+                        help="Sequencing platform type (pacbio-hifi, nanopore)")
+    parser.add_argument("--variant_window", type=int, required=False,
+        help="Window size for variant detection ±bp (default: 20)")
+    parser.add_argument("--primer_check_length", type=int, required=False,
+        help="Length in base pairs from each end of the read to search for PCR primer sequences")
+    parser.add_argument("--min_itr_length", type=int, required=False,
+        help="Minimal ITR Length for NonHDR-with-ITR class.")
 
     return parser.parse_args(argv)
 
